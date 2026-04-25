@@ -1,1 +1,2 @@
-# horse_bet_arena
+# 競馬ベットゲーム
+
