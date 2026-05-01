@@ -1420,6 +1420,15 @@ body.game-entered .arcade-hero{
   .image-runner .lead-tag{left:112px!important}
 }
 
+.n1{background:#fff!important;color:#111!important}
+.n2{background:#111!important;color:#fff!important}
+.n3{background:#d71920!important;color:#fff!important}
+.n4{background:#005bac!important;color:#fff!important}
+.n5,.n6{background:#f4d21f!important;color:#111!important}
+.n7,.n8{background:#009944!important;color:#fff!important}
+.n9,.n10{background:#f58220!important;color:#fff!important}
+.n11,.n12{background:#f4a3c4!important;color:#111!important}
+.n1,.n5,.n6,.n11,.n12{border-color:rgba(20,30,40,.55)!important}
 </style>
 </head>
 <body>
@@ -1502,7 +1511,10 @@ const FULL_GATE=12;
 const BET_TYPES={win:{label:'単勝',need:1,desc:'1着を当てる',modes:['normal']},place:{label:'複勝',need:1,desc:'3着以内を当てる',modes:['normal']},quinella:{label:'馬連',need:2,desc:'1・2着を順不同',modes:['normal','box','flow']},exacta:{label:'馬単',need:2,desc:'1着→2着を順番通り',modes:['normal','box','flow','formation']},trio:{label:'三連複',need:3,desc:'1〜3着を順不同',modes:['normal','box','flow','formation']}};
 const BET_MODES={normal:{label:'通常',desc:'必要頭数を順番に選択'},box:{label:'BOX',desc:'選んだ馬の全組み合わせを一括購入'},flow:{label:'流し',desc:'軸馬から相手へ一括作成'},formation:{label:'フォーメーション',desc:'列ごとに候補を選んで一括購入'}};
 const COLORS=['n1','n2','n3','n4','n5','n6','n7','n8','n9','n10','n11','n12'];
-const HORSE_ASSETS={"brown":"images/horse-brown.png","white":"images/horse-white.png","gold":"images/horse-gold.png","black":"images/horse-black.png","chestnut":"images/horse-chestnut.png","gray":"images/horse-gray.png"};
+const HORSE_SPRITE_KEYS=['horse-amber','horse-black','horse-brown','horse-chestnut','horse-cream','horse-crimson','horse-gold','horse-gray','horse-onyx','horse-rose','horse-silver','horse-storm','horse-violet'];
+const HORSE_FRAME_COUNT=16;
+const HORSE_FRAME_MS={front:70,senkou:78,sashi:88,oikomi:96};
+let horseFramePreloadCache=[];
 const TRACK_BG="images/track-bg.png";
 
 const state={horseMaster:[],raceCalendar:[],credits:325502,year:1,raceIndex:0,active:[],recentAppeared:[],phase:'loading',race:null,field:[],betType:'quinella',betMode:'normal',build:{normal:[],box:[],axis:[],flow:[],formation:[[],[],[]],formationColumn:1,exactaFlowMode:'first',trioAxisMode:1},stake:100,tickets:[],settledTickets:[],history:[],logs:[],result:[],fullOrder:[],racePlan:null,scene:'start',raceInterval:null};
@@ -1511,12 +1523,33 @@ function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.fl
 function parseCsv(text){const rows=[];let row=[],cell='',q=false;for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];if(q){if(c==='"'&&n==='"'){cell+='"';i++;}else if(c==='"'){q=false;}else cell+=c;}else{if(c==='"')q=true;else if(c===','){row.push(cell);cell='';}else if(c==='\n'){row.push(cell);rows.push(row);row=[];cell='';}else if(c==='\r'){}else cell+=c;}}if(cell||row.length){row.push(cell);rows.push(row);}return rows.filter(r=>r.some(c=>String(c).trim()!==''));}
 function rowsToObjects(rows){const headers=rows[0].map(h=>String(h).trim());return rows.slice(1).map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]??''])))}
 function gvizLoad(sheet){return new Promise((resolve,reject)=>{const cb='__gviz_'+Math.random().toString(36).slice(2);const timer=setTimeout(()=>{cleanup();reject(new Error('timeout'));},11000);function cleanup(){clearTimeout(timer);delete window[cb];script.remove();}window[cb]=data=>{try{cleanup();if(data.status&&data.status!=='ok')throw new Error(data.errors?.[0]?.detailed_message||data.status);const cols=data.table.cols.map(c=>c.label||c.id);const rows=data.table.rows.map(r=>Object.fromEntries(cols.map((c,i)=>[c,(r.c[i]?(r.c[i].f??r.c[i].v):'')])));resolve(rows);}catch(e){reject(e);}};const script=document.createElement('script');script.onerror=()=>{cleanup();reject(new Error('script error'));};script.src=`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?sheet=${encodeURIComponent(sheet)}&headers=1&tqx=out:json;responseHandler:${cb}&tq=${encodeURIComponent('select *')}`;document.body.appendChild(script);});}
+function normalizeSpriteKey(key){const v=String(key||'').trim();if(!v)return'';const pref=v.startsWith('horse-')?v:`horse-${v}`;return HORSE_SPRITE_KEYS.includes(pref)?pref:'';}
+function selectSpriteKey(h,offset){const preferred=normalizeSpriteKey(h.spriteKey||h.sprite||h.imageKey||h.assetKey);if(preferred)return preferred;const seed=(state.year*37)+(h.masterId*17)+(offset*7);return HORSE_SPRITE_KEYS[seed%HORSE_SPRITE_KEYS.length];}
+function horseFramePath(spriteKey,frame){const key=normalizeSpriteKey(spriteKey)||HORSE_SPRITE_KEYS[0];const no=String(frame).padStart(2,'0');return `images/${key}/${key}_${no}.png`;}
+function horseFrameSrc(h,styleClass){const key=normalizeSpriteKey(h.spriteKey)||HORSE_SPRITE_KEYS[0];const speed=styleClass==='style-front'?HORSE_FRAME_MS.front:styleClass==='style-senkou'?HORSE_FRAME_MS.senkou:styleClass==='style-sashi'?HORSE_FRAME_MS.sashi:HORSE_FRAME_MS.oikomi;const frame=(Math.floor(performance.now()/speed)%HORSE_FRAME_COUNT)+1;return horseFramePath(key,frame);}
+function preloadRaceHorseFrames(){horseFramePreloadCache=[];unique(state.field.map(h=>normalizeSpriteKey(h.spriteKey)).filter(Boolean)).forEach(key=>{for(let i=1;i<=HORSE_FRAME_COUNT;i++){const img=new Image();img.decoding='async';img.src=horseFramePath(key,i);horseFramePreloadCache.push(img);}});}
 function normalizeHorse(o,i){const style=String(o['脚質']||'').trim().replace('追い込み','追込').replace('大逃げ','大逃');return {masterId:i+1,name:o['競争馬名'],style,popularityBase:+o['人気']||0,rank:o['ランク'],speed:+o['スピード']||0,stamina:+o['スタミナ']||0,power:+o['パワー']||0,season:o['得意季節'],distance:o['得意距離'],surface:o['得意走路'],going:o['得意馬場状態'],course:o['得意競馬場'],turn:o['得意回り'],courseType:o['得意コース型'],total:+o['能力合計']||0,oddsBase:+o['オッズ基礎指数']||0,sex:o['性別']||'牡'};}
 function normalizeRace(o,i){const monthText=o['時期']||'';const month=Number(monthText.replace(/[^-\uFFFF0-9]/g,'').replace('１','1').replace('２','2').replace('３','3').replace('４','4').replace('５','5').replace('６','6').replace('７','7').replace('８','8').replace('９','9').replace('１０','10').replace('１１','11').replace('１２','12'))||Math.floor(i/4)+1;const week=Number((o['週']||'').replace(/[^-\uFFFF0-9]/g,'').replace('１','1').replace('２','2').replace('３','3').replace('４','4'))||i%4+1;return {id:i+1,name:o['レース名'],grade:o['格'],monthText:o['時期'],month,weekText:o['週'],week,globalWeek:i+1,surface:o['走路'],distanceCat:o['距離'],course:o['競馬場'],season:o['季節カテゴリ'],turn:o['回り'],ageCond:o['年齢条件'],sexCond:o['性別条件'],meters:+o['レース上の距離']||0};}
 async function init(){try{const [hRows,rRows]=await Promise.all([gvizLoad('競争馬一覧'),gvizLoad('レース一覧')]);state.horseMaster=hRows.filter(x=>x['競争馬名']&&x['ランク']).map(normalizeHorse);state.raceCalendar=rRows.filter(x=>x['レース名']&&x['格']).map(normalizeRace);if(state.horseMaster.length<50||state.raceCalendar.length<10)throw new Error('data too small');startGame();}catch(e){console.warn(e);$('loading').style.display='none';$('loadNotice').classList.add('show');state.phase='load_failed';}}
 function startGame(){state.phase='betting';state.active=[];state.recentAppeared=[];registerGeneration(-2,5);registerGeneration(-1,4);registerGeneration(0,3);state.raceIndex=0;prepareRace();$('loading').style.display='none';renderAll();}
 function rankNeed(){return {S:1,A:5,B:10,C:16};}
-function registerGeneration(generation,age){const need=rankNeed();const used=new Set(state.recentAppeared.flat());const picked=[];for(const rank of ['S','A','B','C']){let pool=state.horseMaster.filter(h=>h.rank===rank&&!used.has(h.masterId)&&!picked.includes(h.masterId));if(pool.length<need[rank]) pool=state.horseMaster.filter(h=>h.rank===rank&&!state.active.some(a=>a.masterId===h.masterId)&&!picked.includes(h.masterId));shuffle(pool).slice(0,need[rank]).forEach(h=>picked.push(h.masterId));}const newActive=picked.map(id=>{const h=state.horseMaster.find(x=>x.masterId===id);return {...h,horseId:`Y${state.year+generation}-${id}`,generation,age,careerStarts:randint(2,4),lastWeek:-99,recentForm:initialForm(h.rank),wins:0,g1Wins:0,active:true};});state.active.push(...newActive);state.recentAppeared.push(picked);while(state.recentAppeared.length>3)state.recentAppeared.shift();}
+function registerGeneration(generation,age){
+  const need=rankNeed();
+  const used=new Set(state.recentAppeared.flat());
+  const picked=[];
+  for(const rank of ['S','A','B','C']){
+    let pool=state.horseMaster.filter(h=>h.rank===rank&&!used.has(h.masterId)&&!picked.includes(h.masterId));
+    if(pool.length<need[rank]) pool=state.horseMaster.filter(h=>h.rank===rank&&!state.active.some(a=>a.masterId===h.masterId)&&!picked.includes(h.masterId));
+    shuffle(pool).slice(0,need[rank]).forEach(h=>picked.push(h.masterId));
+  }
+  const newActive=picked.map((id,index)=>{
+    const h=state.horseMaster.find(x=>x.masterId===id);
+    return {...h,horseId:`Y${state.year+generation}-${id}`,spriteKey:selectSpriteKey(h,index),generation,age,careerStarts:randint(2,4),lastWeek:-99,recentForm:initialForm(h.rank),wins:0,g1Wins:0,active:true};
+  });
+  state.active.push(...newActive);
+  state.recentAppeared.push(picked);
+  while(state.recentAppeared.length>3)state.recentAppeared.shift();
+}
 function initialForm(rank){const len=randint(2,4);const ranges={S:[1,3],A:[1,5],B:[2,8],C:[4,12]};const [lo,hi]=ranges[rank]||[4,12];return Array.from({length:len},()=>clamp(randint(lo,hi)+randint(-1,1),1,12));}
 function nextYear(){state.year++;state.active=state.active.filter(h=>h.age<5).map(h=>({...h,age:h.age+1,generation:h.generation-1,lastWeek:-99}));registerGeneration(0,3);state.raceIndex=0;state.history.unshift({type:'year',text:`YEAR ${state.year} 開始。新年度のレースが始まります。`});prepareRace();renderAll();}
 function weatherForMonth(month){const table={1:{晴:55,曇:25,雨:10,雪:10},2:{晴:50,曇:25,雨:10,雪:15},3:{晴:55,曇:25,雨:20,雪:0},4:{晴:60,曇:25,雨:15,雪:0},5:{晴:60,曇:25,雨:15,雪:0},6:{晴:35,曇:25,雨:40,雪:0},7:{晴:40,曇:25,雨:35,雪:0},8:{晴:55,曇:25,雨:20,雪:0},9:{晴:45,曇:25,雨:30,雪:0},10:{晴:60,曇:25,雨:15,雪:0},11:{晴:60,曇:25,雨:15,雪:0},12:{晴:55,曇:25,雨:10,雪:10}}[month]||{晴:60,曇:25,雨:15,雪:0};const weather=chooseWeighted(Object.entries(table).map(([k,v])=>({k,v})),x=>x.v).k;let going='良';if(weather==='晴')going=chooseWeighted([{k:'良',v:80},{k:'稍重',v:20}],x=>x.v).k;if(weather==='曇')going=chooseWeighted([{k:'良',v:55},{k:'稍重',v:35},{k:'重',v:10}],x=>x.v).k;if(weather==='雨')going=chooseWeighted([{k:'稍重',v:35},{k:'重',v:45},{k:'不良',v:20}],x=>x.v).k;if(weather==='雪')going=chooseWeighted([{k:'重',v:30},{k:'不良',v:70}],x=>x.v).k;return {weather,going};}
@@ -1575,7 +1608,7 @@ function makePredictionMarks(h){
   ];
 }
 function calculateOdds(){const race=state.race;state.field.forEach(h=>{const rankBonus={S:90,A:45,B:12,C:0}[h.rank]||0;const formAvg=h.recentForm.length?h.recentForm.reduce((a,b)=>a+b,0)/h.recentForm.length:7;const formBonus=(8-formAvg)*5;const score=h.oddsBase*1.0+h.popularityBase*.32+rankBonus+h.condition.v+formBonus+suitability(h,race)+rand(-16,16);h.score=clamp(score,35,900);});const sum=state.field.reduce((s,h)=>s+Math.pow(h.score,3.15),0);state.field.forEach(h=>{const p=Math.pow(h.score,3.15)/sum;h.odds=clamp((RETURN_RATE/p)*rand(.96,1.08),1.1,999.9);const basePlace=clamp(h.odds/rand(3.0,5.6),1.0,199.9);h.placeMin=clamp(basePlace*rand(.86,.96),1.0,199.9);h.placeMax=clamp(basePlace*rand(1.06,1.32),h.placeMin+.1,199.9);h.placePay=+(((h.placeMin+h.placeMax)/2).toFixed(1));});state.field.sort((a,b)=>a.gate-b.gate);const pop=[...state.field].sort((a,b)=>a.odds-b.odds);pop.forEach((h,i)=>h.popularity=i+1);assignPredictionMarks();}
-function prepareRace(){state.phase='betting';state.tickets=[];state.settledTickets=[];state.result=[];state.fullOrder=[];state.build={normal:[],box:[],axis:[],flow:[],formation:[[],[],[]],formationColumn:1,exactaFlowMode:'first',trioAxisMode:1};const base=state.raceCalendar[state.raceIndex];const wg=weatherForMonth(base.month);state.race={...base,...wg};state.field=selectField(state.race);calculateOdds();renderAll();}
+function prepareRace(){state.phase='betting';state.tickets=[];state.settledTickets=[];state.result=[];state.fullOrder=[];state.build={normal:[],box:[],axis:[],flow:[],formation:[[],[],[]],formationColumn:1,exactaFlowMode:'first',trioAxisMode:1};const base=state.raceCalendar[state.raceIndex];const wg=weatherForMonth(base.month);state.race={...base,...wg};state.field=selectField(state.race);calculateOdds();preloadRaceHorseFrames();renderAll();}
 function getFieldHorse(id){return state.field.find(h=>h.horseId===id);}function getFieldHorseByGate(g){return state.field.find(h=>h.gate===g);}
 function renderAll(){if(!state.race)return;$('creditsView').textContent=fmt(state.credits);$('yearView').textContent=`YEAR ${state.year}`;$('raceTitleView').textContent=state.race.name;$('phaseView').textContent=state.phase==='betting'?'投票受付':state.phase==='running'?'レース中':'払戻';$('metaRace').textContent=state.race.name;$('metaGrade').textContent=state.race.grade;$('metaWeather').textContent=`${state.race.weather}/${state.race.going}`;$('metaDist').textContent=`${state.race.meters}m`;$('raceInfoLine').textContent=`${state.race.monthText}${state.race.weekText} ${state.race.course} ${state.race.surface} ${state.race.meters}m`;renderBetTypeButtons();renderBetModeButtons();renderEntries();renderBuildViews();renderSummary();renderTickets();renderHistory();}
 function renderBetTypeButtons(){const root=$('betTypeSegment');root.innerHTML='';Object.entries(BET_TYPES).forEach(([k,v])=>{const b=document.createElement('button');b.className='seg-btn'+(state.betType===k?' active':'');b.textContent=v.label;b.disabled=state.phase!=='betting';b.onclick=()=>{state.betType=k;if(!BET_TYPES[k].modes.includes(state.betMode))state.betMode='normal';clearBuild();renderAll();};root.appendChild(b);});$('betTypeHelp').textContent=BET_TYPES[state.betType].desc;}
@@ -1757,11 +1790,11 @@ function renderTrack(){
     lane.className='lane image-lane '+(rank<=3?'lane-top':'')+' lane-rank-'+rank;
     lane.style.top=(18+i*46)+'px';
     const colorClass=COLORS[(h.gate-1)%COLORS.length];
-    const horseTone=['brown','white','gold','black','chestnut','gray'][((h.gate-1)%6)];
+    const frameSrc=horseFrameSrc(h,styleClass);
     lane.innerHTML=`
       <div class="runner horse-runner image-runner ${styleClass}" style="left:${clamp(h.progress,0,90)}%">
         <div class="speed-burst"></div>
-        <img class="horse-img" src="${HORSE_ASSETS[horseTone]}" alt="">
+        <img class="horse-img" src="${frameSrc}" alt="">
         <div class="gate-plate ${colorClass}">${h.gate}</div>
         <div class="dust"></div>
         <div class="rlabel">${h.name}</div>
